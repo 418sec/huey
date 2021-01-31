@@ -11,6 +11,8 @@ import hmac
 import logging
 import pickle
 import sys
+import io
+import builtins
 
 from huey.exceptions import ConfigurationError
 from huey.utils import encode
@@ -51,6 +53,29 @@ else:
         return data and data[0] == 0x1f or data[0] == 0x78
 
 
+safe_builtins = {
+    'range',
+    'complex',
+    'set',
+    'frozenset',
+    'slice',
+}
+
+class RestrictedUnpickler(pickle.Unpickler):
+
+    def find_class(self, module, name):
+        """Only allow safe classes from builtins"""
+        if module == "builtins" and name in safe_builtins:
+            return getattr(builtins, name)
+        """Forbid everything else"""
+        raise pickle.UnpicklingError("global '%s.%s' is forbidden" %
+                                     (module, name))
+
+def restricted_loads(s):
+    """Helper function analogous to pickle.loads()"""
+    return RestrictedUnpickler(io.BytesIO(s)).load()
+
+
 class Serializer(object):
     def __init__(self, compression=False, compression_level=6, use_zlib=False,
                  pickle_protocol=pickle.HIGHEST_PROTOCOL):
@@ -70,7 +95,7 @@ class Serializer(object):
         return pickle.dumps(data, self.pickle_protocol)
 
     def _deserialize(self, data):
-        return pickle.loads(data)
+        return pickle.loads(restricted_loads(data))
 
     def serialize(self, data):
         data = self._serialize(data)
